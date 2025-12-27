@@ -7,8 +7,9 @@ import { Loader, Shield, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
     const router = useRouter();
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
+    // Pre-filled for development - remove in production
+    const [email, setEmail] = useState('admin@flowstatebjj.com.au');
+    const [password, setPassword] = useState('flowstate2024');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
