@@ -1,0 +1,44 @@
+{
+  "name": "flowstate-member-management",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:seed": "npx tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@vercel/postgres": "^0.10.0",
+    "drizzle-orm": "^0.37.0",
+    "next-auth": "^5.0.0-beta.25",
+    "@auth/drizzle-adapter": "^1.7.4",
+    "@google/genai": "^1.0.0",
+    "lucide-react": "^0.468.0",
+    "recharts": "^2.15.0",
+    "framer-motion": "^11.15.0",
+    "date-fns": "^4.1.0",
+    "bcryptjs": "^2.4.3",
+    "clsx": "^2.1.1",
+    "uuid": "^11.0.3",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.2",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.7.2",
+    "drizzle-kit": "^0.30.0",
+    "tailwindcss": "^3.4.17",
+    "postcss": "^8.4.49",
+    "autoprefixer": "^10.4.20"
+  }
+}

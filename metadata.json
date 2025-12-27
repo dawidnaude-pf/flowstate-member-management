@@ -1,0 +1,7 @@
+{
+  "name": "Flow State BJJ Manager",
+  "description": "A comprehensive management system for Brazilian Jiu-Jitsu academies. Tracks attendance, billing, memberships, and scheduling with AI-assisted class planning.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
