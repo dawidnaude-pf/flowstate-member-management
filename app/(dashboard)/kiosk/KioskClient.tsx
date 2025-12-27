@@ -124,16 +124,21 @@ export default function KioskClient() {
                 },
             });
             streamRef.current = stream;
-            if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-                await videoRef.current.play();
-            }
+            // Set streaming first to render the video element
             setIsStreaming(true);
         } catch (err) {
             console.error('Camera access error:', err);
             setCameraError('Could not access camera. Please allow camera permissions.');
         }
     };
+
+    // Attach stream to video element after it's rendered
+    useEffect(() => {
+        if (isStreaming && streamRef.current && videoRef.current) {
+            videoRef.current.srcObject = streamRef.current;
+            videoRef.current.play().catch(console.error);
+        }
+    }, [isStreaming]);
 
     // Stop camera stream
     const stopCamera = useCallback(() => {
