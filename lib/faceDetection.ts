@@ -143,7 +143,8 @@ export function matchFaces(
 
             return {
                 ...detection,
-                id: `face-${index}-${Date.now()}`,
+                // Use stable ID based on member for smooth CSS transitions
+                id: `member-${bestMatch.member.id}`,
                 label: `${bestMatch.member.firstName} ${bestMatch.member.lastName}`,
                 isUnknown: false,
                 memberId: bestMatch.member.id,
@@ -153,7 +154,8 @@ export function matchFaces(
 
         return {
             ...detection,
-            id: `face-${index}-${Date.now()}`,
+            // Use stable index-based ID for unknown faces
+            id: `unknown-${index}`,
             label: 'Unknown',
             isUnknown: true,
             confidence: 0,

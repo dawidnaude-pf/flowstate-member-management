@@ -388,7 +388,7 @@ export default function KioskClient() {
                             {detectedFaces.map((face) => (
                                 <div
                                     key={face.id}
-                                    className={`absolute border-4 transition-all duration-200 rounded-lg ${face.checkedIn ? 'border-green-500 bg-green-500/20' :
+                                    className={`absolute border-4 rounded-lg transition-all duration-150 ease-out ${face.checkedIn ? 'border-green-500 bg-green-500/20' :
                                         face.isUnknown ? 'border-amber-400' : 'border-blue-400'
                                         }`}
                                     style={{

@@ -14,6 +14,7 @@ export async function POST(request: NextRequest) {
 
         try {
             // Create new member with face embedding for instant recognition
+            // Note: Skipping profileImage storage for speed - face embedding is used for recognition
             const [inserted] = await db
                 .insert(members)
                 .values({
@@ -21,7 +22,8 @@ export async function POST(request: NextRequest) {
                     lastName: lastName || '',
                     email: email || null,
                     phone: phone || null,
-                    profileImage: profileImage || null,
+                    // Deliberately not storing profileImage - large base64 causes slow DB writes
+                    // profileImage: profileImage || null,
                     faceEmbedding: faceEmbedding || null,
                     beltRank: 'white',
                     status: 'trial',
