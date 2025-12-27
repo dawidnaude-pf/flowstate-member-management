@@ -4,7 +4,7 @@ import { members, attendance } from '@/lib/db/schema';
 
 export async function POST(request: NextRequest) {
     try {
-        const { firstName, lastName, email, phone, profileImage } = await request.json();
+        const { firstName, lastName, email, phone, profileImage, faceEmbedding } = await request.json();
 
         if (!firstName) {
             return NextResponse.json({ success: false, error: 'First name is required' }, { status: 400 });
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
         let newMember;
 
         try {
-            // Create new member
+            // Create new member with face embedding for instant recognition
             const [inserted] = await db
                 .insert(members)
                 .values({
@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
                     email: email || null,
                     phone: phone || null,
                     profileImage: profileImage || null,
+                    faceEmbedding: faceEmbedding || null,
                     beltRank: 'white',
                     status: 'trial',
                     programs: ['Trial'],

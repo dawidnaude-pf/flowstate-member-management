@@ -17,6 +17,15 @@ import {
     Check,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import {
+    loadModels,
+    areModelsLoaded,
+    detectFaces,
+    matchFaces,
+    getFaceDescriptor,
+    type StoredMember,
+    type MatchedFace,
+} from '@/lib/faceDetection';
 
 interface DetectedFace {
     id: string;
@@ -26,6 +35,7 @@ interface DetectedFace {
     memberId?: string;
     confidence?: number;
     checkedIn?: boolean;
+    descriptor?: Float32Array;
 }
 
 interface CheckedInMember {
@@ -42,20 +52,22 @@ export default function KioskClient() {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
-    const animationRef = useRef<number>(0);
 
     const [isStreaming, setIsStreaming] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [modelsReady, setModelsReady] = useState(false);
+    const [loadingModels, setLoadingModels] = useState(false);
     const [cameraError, setCameraError] = useState<string | null>(null);
     const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
     const [checkedInMember, setCheckedInMember] = useState<CheckedInMember | null>(null);
     const [showEnrollment, setShowEnrollment] = useState(false);
     const [enrollmentImage, setEnrollmentImage] = useState<string | null>(null);
-    const [enrollmentFaceId, setEnrollmentFaceId] = useState<string | null>(null);
+    const [enrollmentDescriptor, setEnrollmentDescriptor] = useState<Float32Array | null>(null);
     const [soundEnabled, setSoundEnabled] = useState(true);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [checkedInFaces, setCheckedInFaces] = useState<Set<string>>(new Set());
     const [currentClass, setCurrentClass] = useState<string | null>(null);
+    const [storedMembers, setStoredMembers] = useState<StoredMember[]>([]);
 
     // Update clock
     useEffect(() => {
@@ -63,10 +75,47 @@ export default function KioskClient() {
         return () => clearInterval(timer);
     }, []);
 
+    // Load face-api.js models on mount
+    useEffect(() => {
+        const initModels = async () => {
+            if (areModelsLoaded()) {
+                setModelsReady(true);
+                return;
+            }
+            setLoadingModels(true);
+            try {
+                await loadModels();
+                setModelsReady(true);
+            } catch (error) {
+                console.error('Failed to load face detection models:', error);
+                setCameraError('Failed to load face detection models');
+            }
+            setLoadingModels(false);
+        };
+        initModels();
+    }, []);
+
+    // Fetch member embeddings for matching
+    const fetchMemberEmbeddings = useCallback(async () => {
+        try {
+            const response = await fetch('/api/members/embeddings');
+            const data = await response.json();
+            if (data.members) {
+                setStoredMembers(data.members);
+            }
+        } catch (error) {
+            console.error('Failed to fetch member embeddings:', error);
+        }
+    }, []);
+
     // Start camera stream
     const startCamera = async () => {
         try {
             setCameraError(null);
+
+            // Fetch member embeddings for matching
+            await fetchMemberEmbeddings();
+
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: {
                     facingMode: 'user',
@@ -97,7 +146,6 @@ export default function KioskClient() {
         }
         setIsStreaming(false);
         setDetectedFaces([]);
-        cancelAnimationFrame(animationRef.current);
     }, []);
 
     // Cleanup on unmount
@@ -107,78 +155,60 @@ export default function KioskClient() {
         };
     }, [stopCamera]);
 
-    // Capture and process frame
+    // Process frame with local face-api.js detection
     const processFrame = useCallback(async () => {
-        if (!videoRef.current || !canvasRef.current || !isStreaming || checkedInMember || showEnrollment) {
+        if (!videoRef.current || !isStreaming || checkedInMember || showEnrollment || !modelsReady) {
             return;
         }
 
         const video = videoRef.current;
-        const canvas = canvasRef.current;
 
         if (video.videoWidth === 0 || video.videoHeight === 0) {
             return;
         }
 
-        // Downscale for performance
-        const scale = Math.min(480 / video.videoWidth, 1);
-        canvas.width = video.videoWidth * scale;
-        canvas.height = video.videoHeight * scale;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = canvas.toDataURL('image/jpeg', 0.6);
-
         if (!isProcessing) {
             setIsProcessing(true);
             try {
-                const response = await fetch('/api/kiosk/detect', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image: imageData }),
-                });
+                // Detect faces locally using face-api.js
+                const detections = await detectFaces(video);
 
-                const data = await response.json();
+                if (detections.length > 0) {
+                    // Match against stored member embeddings
+                    const matched = matchFaces(detections, storedMembers);
 
-                if (data.faces && data.faces.length > 0) {
                     // Preserve check-in state for already checked-in faces
-                    setDetectedFaces(data.faces.map((f: DetectedFace) => ({
+                    setDetectedFaces(matched.map((f: MatchedFace) => ({
                         ...f,
                         checkedIn: checkedInFaces.has(f.memberId || '') || false,
                     })));
                 } else {
                     setDetectedFaces([]);
                 }
-
-                if (data.currentClass) {
-                    setCurrentClass(data.currentClass);
-                }
             } catch (err) {
                 console.error('Detection error:', err);
             }
             setIsProcessing(false);
         }
-    }, [isStreaming, isProcessing, checkedInMember, showEnrollment]);
+    }, [isStreaming, isProcessing, checkedInMember, showEnrollment, modelsReady, storedMembers, checkedInFaces]);
 
-    // Processing loop
+    // Processing loop - runs every 300ms for responsive detection
     useEffect(() => {
         let intervalId: NodeJS.Timeout;
 
-        if (isStreaming && !checkedInMember && !showEnrollment) {
+        if (isStreaming && !checkedInMember && !showEnrollment && modelsReady) {
             intervalId = setInterval(() => {
                 processFrame();
-            }, 500); // Process every 500ms for performance
+            }, 300);
         }
 
         return () => {
             if (intervalId) clearInterval(intervalId);
         };
-    }, [isStreaming, checkedInMember, showEnrollment, processFrame]);
+    }, [isStreaming, checkedInMember, showEnrollment, modelsReady, processFrame]);
 
     // Handle manual check-in for a specific face
-    const handleCheckIn = async (face: DetectedFace, imageData?: string) => {
+    const handleCheckIn = async (face: DetectedFace) => {
         if (!face.memberId || face.checkedIn) return;
 
         try {
@@ -197,12 +227,15 @@ export default function KioskClient() {
                     f.id === face.id ? { ...f, checkedIn: true } : f
                 ));
 
-                // Add face image to training data for future recognition
-                if (imageData) {
-                    fetch('/api/kiosk/learn', {
+                // Learn: Store the face embedding to improve future recognition
+                if (face.descriptor) {
+                    fetch('/api/members/embeddings', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ memberId: face.memberId, imageData }),
+                        body: JSON.stringify({
+                            memberId: face.memberId,
+                            embedding: Array.from(face.descriptor),
+                        }),
                     }).catch(() => { });
                 }
 
@@ -221,23 +254,8 @@ export default function KioskClient() {
         }
     };
 
-    // Get current frame image for learning
-    const getCurrentFrameImage = () => {
-        if (!videoRef.current || !canvasRef.current) return undefined;
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0);
-            return canvas.toDataURL('image/jpeg', 0.8);
-        }
-        return undefined;
-    };
-
     // Handle enrollment of unknown face
-    const handleStartEnrollment = (faceId: string) => {
+    const handleStartEnrollment = async (face: DetectedFace) => {
         if (videoRef.current && canvasRef.current) {
             const video = videoRef.current;
             const canvas = canvasRef.current;
@@ -250,7 +268,12 @@ export default function KioskClient() {
                 setEnrollmentImage(canvas.toDataURL('image/jpeg', 0.8));
             }
         }
-        setEnrollmentFaceId(faceId);
+
+        // Store the descriptor for enrollment
+        if (face.descriptor) {
+            setEnrollmentDescriptor(face.descriptor);
+        }
+
         setShowEnrollment(true);
     };
 
@@ -312,12 +335,22 @@ export default function KioskClient() {
 
             {/* Main Area */}
             <div className="flex-1 flex items-center justify-center p-4">
-                {!isStreaming ? (
+                {/* Loading Models */}
+                {loadingModels && (
+                    <div className="text-center">
+                        <Loader className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
+                        <p className="text-white text-lg">Loading face detection models...</p>
+                        <p className="text-white/50 text-sm mt-2">This only happens once</p>
+                    </div>
+                )}
+
+                {!loadingModels && !isStreaming ? (
                     // Start Screen
                     <div className="text-center">
                         <button
                             onClick={startCamera}
-                            className="group flex flex-col items-center p-12 bg-gradient-to-br from-slate-800 to-slate-700 rounded-3xl shadow-2xl hover:from-slate-700 hover:to-slate-600 transition-all transform hover:scale-105"
+                            disabled={!modelsReady}
+                            className="group flex flex-col items-center p-12 bg-gradient-to-br from-slate-800 to-slate-700 rounded-3xl shadow-2xl hover:from-slate-700 hover:to-slate-600 transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mb-6 group-hover:bg-blue-500 transition-colors shadow-lg shadow-blue-600/30">
                                 <ScanFace className="w-12 h-12 text-white" />
@@ -333,7 +366,7 @@ export default function KioskClient() {
                             </div>
                         )}
                     </div>
-                ) : (
+                ) : isStreaming && (
                     // Camera View
                     <div className="relative w-full max-w-4xl aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl">
                         <video
@@ -351,7 +384,7 @@ export default function KioskClient() {
                                 <div
                                     key={face.id}
                                     className={`absolute border-4 transition-all duration-200 rounded-lg ${face.checkedIn ? 'border-green-500 bg-green-500/20' :
-                                            face.isUnknown ? 'border-amber-400' : 'border-blue-400'
+                                        face.isUnknown ? 'border-amber-400' : 'border-blue-400'
                                         }`}
                                     style={{
                                         left: `${(1 - face.box.x - face.box.width) * 100}%`,
@@ -363,11 +396,11 @@ export default function KioskClient() {
                                     {/* Name Label */}
                                     <div
                                         className={`absolute -top-12 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap shadow-lg ${face.checkedIn ? 'bg-green-500 text-white' :
-                                                face.isUnknown ? 'bg-amber-500 text-white' : 'bg-blue-500 text-white'
+                                            face.isUnknown ? 'bg-amber-500 text-white' : 'bg-blue-500 text-white'
                                             }`}
                                     >
                                         {face.checkedIn ? '✓ ' : ''}{face.label}
-                                        {face.confidence && !face.isUnknown && (
+                                        {face.confidence !== undefined && !face.isUnknown && (
                                             <span className="ml-2 opacity-70 text-xs">
                                                 {Math.round(face.confidence * 100)}%
                                             </span>
@@ -379,7 +412,7 @@ export default function KioskClient() {
                                         {/* Check-in button for recognized members */}
                                         {!face.isUnknown && !face.checkedIn && face.memberId && (
                                             <button
-                                                onClick={() => handleCheckIn(face, getCurrentFrameImage())}
+                                                onClick={() => handleCheckIn(face)}
                                                 className="px-5 py-3 bg-green-500 text-white rounded-full text-sm font-bold shadow-xl flex items-center hover:bg-green-600 transition-all transform hover:scale-105"
                                             >
                                                 <Check className="w-5 h-5 mr-2" />
@@ -398,7 +431,7 @@ export default function KioskClient() {
                                         {/* Enroll button for unknown */}
                                         {face.isUnknown && (
                                             <button
-                                                onClick={() => handleStartEnrollment(face.id)}
+                                                onClick={() => handleStartEnrollment(face)}
                                                 className="px-5 py-3 bg-amber-500 text-white rounded-full text-sm font-bold shadow-xl flex items-center hover:bg-amber-600 transition-all transform hover:scale-105"
                                             >
                                                 <UserPlus className="w-5 h-5 mr-2" />
@@ -432,7 +465,7 @@ export default function KioskClient() {
                                 ) : (
                                     <>
                                         <Camera className="w-4 h-4 mr-2" />
-                                        {currentClass ? `Current: ${currentClass}` : 'Ready to scan'}
+                                        {`${storedMembers.filter(m => m.faceEmbedding).length} faces enrolled • Ready to scan`}
                                     </>
                                 )}
                             </div>
@@ -484,19 +517,22 @@ export default function KioskClient() {
             {showEnrollment && (
                 <EnrollmentModal
                     image={enrollmentImage}
+                    descriptor={enrollmentDescriptor}
                     onClose={() => {
                         setShowEnrollment(false);
                         setEnrollmentImage(null);
-                        setEnrollmentFaceId(null);
+                        setEnrollmentDescriptor(null);
                     }}
                     onSuccess={(member) => {
                         setShowEnrollment(false);
                         setEnrollmentImage(null);
-                        setEnrollmentFaceId(null);
+                        setEnrollmentDescriptor(null);
                         setCheckedInMember(member);
                         if (member.id) {
                             setCheckedInFaces(prev => new Set(prev).add(member.id));
                         }
+                        // Refresh member embeddings
+                        fetchMemberEmbeddings();
                         setTimeout(() => setCheckedInMember(null), 2000);
                     }}
                 />
@@ -508,11 +544,12 @@ export default function KioskClient() {
 // Enrollment Modal Component
 interface EnrollmentModalProps {
     image: string | null;
+    descriptor: Float32Array | null;
     onClose: () => void;
     onSuccess: (member: CheckedInMember) => void;
 }
 
-function EnrollmentModal({ image, onClose, onSuccess }: EnrollmentModalProps) {
+function EnrollmentModal({ image, descriptor, onClose, onSuccess }: EnrollmentModalProps) {
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
     const [email, setEmail] = useState('');
@@ -524,6 +561,7 @@ function EnrollmentModal({ image, onClose, onSuccess }: EnrollmentModalProps) {
         setLoading(true);
 
         try {
+            // Create member with profile image and face embedding
             const response = await fetch('/api/kiosk/enroll', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -533,6 +571,7 @@ function EnrollmentModal({ image, onClose, onSuccess }: EnrollmentModalProps) {
                     email,
                     phone,
                     profileImage: image,
+                    faceEmbedding: descriptor ? Array.from(descriptor) : null,
                 }),
             });
 
